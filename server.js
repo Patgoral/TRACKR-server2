@@ -6,11 +6,13 @@ const cors = require('cors')
 require('dotenv').config();
 require('./config/database');
 
+
 const app = express();
 
 app.use(logger('dev'));
 app.use(express.json());
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || `http://localhost:3000` }))
+
 
 
 // Configure both serve-favicon & static middleware
@@ -35,3 +37,4 @@ app.use('/api/attendees', require('./routes/api/attendees'))
 app.listen(port, function () {
   console.log(`Express app running on port ${port}`);
 });
+

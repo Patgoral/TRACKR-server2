@@ -1,4 +1,7 @@
 const Attendee = require('../../models/attendee')
+const aws = require('aws-sdk');
+const fs = require('fs');
+
 
 // INDEX ALL ATTENDEES
 async function index(req, res, next) {
@@ -47,17 +50,47 @@ async function showAll(req, res, next) {
 
 // POST
 async function create(req, res, next) {
-	console.log(req.body)
+	// console.log(req.body);
 	try {
-		const attendee = req.body.attendee
-		attendee.owner = req.user._id
-		await Attendee.create(req.body.attendee).then((attendee) => {
-			res.status(201).json({ attendee: attendee })
-		})
+	  let imageUrl;
+	  if (req.file) {
+		aws.config.setPromisesDependency();
+		aws.config.update({
+		  accessKeyId: process.env.AWS_ACCESS_KEY,
+		  secretAccessKey: process.env.AWS_SECRET_KEY,
+		  region: process.env.AWS_BUCKET_REGION,
+		});
+		const s3 = new aws.S3();
+
+		const params = {
+		  ACL: 'public-read',
+		  Bucket: process.env.AWS_BUCKET_NAME,
+		  Body: fs.createReadStream(req.file.path),
+		  Key: `userImage/${req.file.originalname}`,
+		};
+		
+
+		const data = await s3.upload(params).promise();
+		fs.unlinkSync(req.file.path);
+		imageUrl = data.Location;
+	  }
+  
+	  let attendeeData = {};
+	  if (req.body.attendee) {
+		attendeeData = { ...req.body.attendee };
+	  }
+	  	  console.log(attendeeData)
+
+	  attendeeData.image = imageUrl;
+	  attendeeData.owner = req.user._id;
+
+	  const attendee = await Attendee.create(attendeeData);
+	  res.status(201).json({ attendee });
 	} catch (error) {
-		res.status(400).json(error)
+	  console.log('Error occurred while trying to upload to S3 bucket', error);
+	  res.status(400).json(error);
 	}
-}
+  }
 
 
 // PATCH

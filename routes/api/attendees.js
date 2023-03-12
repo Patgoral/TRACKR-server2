@@ -1,7 +1,7 @@
 const express = require('express')
 const router= express.Router()
 const attendeesCtrl = require('../../controllers/api/attendees')
-
+const multer = require('multer')
 
 // GET /api/attendees
 router.get('/', attendeesCtrl.index)
@@ -16,7 +16,11 @@ router.get('/:id', attendeesCtrl.showAll)
 
 
 // POST /api/attendees
-router.post('/', attendeesCtrl.create)
+router.route('/')
+.post(multer({ dest: 'temp/', limits: { fieldSize: 8 * 1024 * 1024 } }).single(
+    'image'
+  ),
+   attendeesCtrl.create)
 
 
 // PATCH /api/attendees/:id
