@@ -14,6 +14,9 @@ const attendeeSchema = new Schema(
 		image: { 
             type: String ,
         },
+        gpx: {
+            type: String,
+        },
 
 		owner: {
 			type: mongoose.Schema.Types.ObjectId,
