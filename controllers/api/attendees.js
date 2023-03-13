@@ -1,6 +1,8 @@
 const Attendee = require('../../models/attendee')
 const aws = require('aws-sdk')
 const fs = require('fs')
+const gpxParser = require('gpxparser')
+const uuid = require('uuid').v4;
 
 
 // INDEX ALL ATTENDEES
@@ -61,55 +63,61 @@ async function create(req, res, next) {
 			})
 			const s3 = new aws.S3()
 
-					if (req.files.image) {
-			const imageParams = {
-				ACL: 'public-read',
-				Bucket: process.env.AWS_BUCKET_NAME,
-				Body: fs.createReadStream(req.files.image[0].path),
-				Key: `userImage/${req.files.image[0].originalname}`,
+			if (req.files.image) {
+				const imageParams = {
+					ACL: 'public-read',
+					Bucket: process.env.AWS_BUCKET_NAME,
+					Body: fs.createReadStream(req.files.image[0].path),
+					Key: `userImage/${req.files.image[0].originalname}`,
+				}
+				const imageData = await s3.upload(imageParams).promise()
+				fs.unlinkSync(req.files.image[0].path)
+				imageUrl = imageData.Location
 			}
-			const imageData = await s3.upload(imageParams).promise()
-			fs.unlinkSync(req.files.image[0].path)
-			imageUrl = imageData.Location
-		}
 
-		if (req.files.gpx) {
-			const gpxParams = {
-				ACL: 'public-read',
-				Bucket: process.env.AWS_BUCKET_NAME,
-				Body: fs.createReadStream(req.files.gpx[0].path),
-				Key: `gpx/${req.files.gpx[0].originalname}`,
+
+			if (req.files.gpx) {
+				const gpxFileContents = fs.readFileSync(req.files.gpx[0].path, 'utf8');
+				const parsedGpx = new gpxParser()
+				parsedGpx.parse(gpxFileContents)
+				console.log(parsedGpx)
+				const uniqueId = uuid();
+				const gpxParams = {
+					ACL: 'public-read',
+					Bucket: process.env.AWS_BUCKET_NAME,
+					Body: parsedGpx.toString(),
+					Key: `gpx/${uniqueId}`,
+				}
+				const gpxData = await s3.upload(gpxParams).promise()
+				fs.unlinkSync(req.files.gpx[0].path)
+				gpxUrl = gpxData.Location
 			}
-			const gpxData = await s3.upload(gpxParams).promise()
-			fs.unlinkSync(req.files.gpx[0].path)
-			gpxUrl = gpxData.Location
 		}
-	}
-	
-	let attendeeData = {}
-	if (req.body.attendee) {
-		attendeeData = { ...req.body.attendee }
-		if (imageUrl) {
-			attendeeData.image = imageUrl
-		}
-		if (gpxUrl) {
-			attendeeData.gpx = gpxUrl
-		}
-	} else {
-		attendeeData = {
-			image: imageUrl,
-			gpx: gpxUrl
-		}
-	}
-	attendeeData.owner = req.user._id
 
-	const attendee = await Attendee.create(attendeeData)
+		let attendeeData = {}
+		if (req.body.attendee) {
+			attendeeData = { ...req.body.attendee }
+			if (imageUrl) {
+				attendeeData.image = imageUrl
+			}
+			if (gpxUrl) {
+				attendeeData.gpx = gpxUrl
+			}
+		} else {
+			attendeeData = {
+				image: imageUrl,
+				gpx: gpxUrl,
+			}
+		}
+		attendeeData.owner = req.user._id
 
-	res.status(201).json({ attendee })
-} catch (error) {
-	console.log('Error occurred while trying to upload to S3 bucket', error)
-	res.status(400).json(error)
-}
+		const attendee = await Attendee.create(attendeeData)
+
+		res.status(201).json({ attendee })
+	} catch (error) {
+		console.log('Error occurred while trying to upload to S3 bucket', error)
+		res.status(400).json(error)
+	}
 }
 
 // PATCH
