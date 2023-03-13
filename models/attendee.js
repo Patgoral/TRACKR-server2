@@ -15,7 +15,7 @@ const attendeeSchema = new Schema(
             type: String ,
         },
         gpx: {
-            type: String,
+            type: Object,
         },
 
 		owner: {

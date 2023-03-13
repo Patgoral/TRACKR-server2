@@ -81,16 +81,17 @@ async function create(req, res, next) {
 				const parsedGpx = new gpxParser()
 				parsedGpx.parse(gpxFileContents)
 				console.log(parsedGpx)
-				const uniqueId = uuid();
-				const gpxParams = {
-					ACL: 'public-read',
-					Bucket: process.env.AWS_BUCKET_NAME,
-					Body: parsedGpx.toString(),
-					Key: `gpx/${uniqueId}`,
-				}
-				const gpxData = await s3.upload(gpxParams).promise()
-				fs.unlinkSync(req.files.gpx[0].path)
-				gpxUrl = gpxData.Location
+				gpxUrl = parsedGpx
+				// const uniqueId = uuid();
+				// const gpxParams = {
+				// 	ACL: 'public-read',
+				// 	Bucket: process.env.AWS_BUCKET_NAME,
+				// 	Body: parsedGpx.toString(),
+				// 	Key: `gpx/${uniqueId}`,
+				// }
+				// const gpxData = await s3.upload(gpxParams).promise()
+				// fs.unlinkSync(req.files.gpx[0].path)
+				// gpxUrl = gpxData.Location
 			}
 		}
 
