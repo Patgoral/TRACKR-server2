@@ -50,7 +50,6 @@ async function showAll(req, res, next) {
 
 // POST
 async function create(req, res, next) {
-	// console.log(req.body);
 	try {
 	  let imageUrl;
 	  if (req.file) {
@@ -61,15 +60,14 @@ async function create(req, res, next) {
 		  region: process.env.AWS_BUCKET_REGION,
 		});
 		const s3 = new aws.S3();
-
+  
 		const params = {
 		  ACL: 'public-read',
 		  Bucket: process.env.AWS_BUCKET_NAME,
 		  Body: fs.createReadStream(req.file.path),
 		  Key: `userImage/${req.file.originalname}`,
 		};
-		
-
+  
 		const data = await s3.upload(params).promise();
 		fs.unlinkSync(req.file.path);
 		imageUrl = data.Location;
@@ -78,13 +76,18 @@ async function create(req, res, next) {
 	  let attendeeData = {};
 	  if (req.body.attendee) {
 		attendeeData = { ...req.body.attendee };
+		if (imageUrl) {
+		  attendeeData.image = imageUrl;
+		}
+	  } else {
+		attendeeData = {
+		  image: imageUrl,
+		};
 	  }
-	  	  console.log(attendeeData)
-
-	  attendeeData.image = imageUrl;
 	  attendeeData.owner = req.user._id;
-
+  
 	  const attendee = await Attendee.create(attendeeData);
+  
 	  res.status(201).json({ attendee });
 	} catch (error) {
 	  console.log('Error occurred while trying to upload to S3 bucket', error);

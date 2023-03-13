@@ -19,8 +19,7 @@ router.get('/:id', attendeesCtrl.showAll)
 router.route('/')
 .post(multer({ dest: 'temp/', limits: { fieldSize: 8 * 1024 * 1024 } }).single(
     'image'
-  ),
-   attendeesCtrl.create)
+  ), attendeesCtrl.create)
 
 
 // PATCH /api/attendees/:id
