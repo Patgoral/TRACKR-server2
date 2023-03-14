@@ -2,7 +2,7 @@ const Attendee = require('../../models/attendee')
 const aws = require('aws-sdk')
 const fs = require('fs')
 const gpxParser = require('gpxparser')
-const uuid = require('uuid').v4;
+const polyline = require('polyline')
 
 
 // INDEX ALL ATTENDEES
@@ -80,18 +80,13 @@ async function create(req, res, next) {
 				const gpxFileContents = fs.readFileSync(req.files.gpx[0].path, 'utf8');
 				const parsedGpx = new gpxParser()
 				parsedGpx.parse(gpxFileContents)
-				console.log(parsedGpx)
-				gpxUrl = parsedGpx
-				// const uniqueId = uuid();
-				// const gpxParams = {
-				// 	ACL: 'public-read',
-				// 	Bucket: process.env.AWS_BUCKET_NAME,
-				// 	Body: parsedGpx.toString(),
-				// 	Key: `gpx/${uniqueId}`,
-				// }
-				// const gpxData = await s3.upload(gpxParams).promise()
-				// fs.unlinkSync(req.files.gpx[0].path)
-				// gpxUrl = gpxData.Location
+				const points = parsedGpx.tracks[0].points.map(point => ({
+					lat: point.lat,
+					long: point.lon
+				}));
+				console.log(points)
+				gpxUrl = points
+				
 			}
 		}
 
