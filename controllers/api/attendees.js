@@ -3,7 +3,7 @@ const aws = require('aws-sdk')
 const fs = require('fs')
 const gpxParser = require('gpxparser')
 const polyline = require('polyline')
-
+const sax = require('sax')
 
 // INDEX ALL ATTENDEES
 async function index(req, res, next) {
@@ -75,14 +75,27 @@ async function create(req, res, next) {
 				imageUrl = imageData.Location
 			}
 
-
 			if (req.files.gpx) {
-				const gpxFileContents = fs.readFileSync(req.files.gpx[0].path, 'utf8');
-				const parsedGpx = new gpxParser()
-				parsedGpx.parse(gpxFileContents)
-				const points = parsedGpx.tracks[0].points.map(point => [point.lat, point.lon])
+				const gpxReadStream = fs.createReadStream(req.files.gpx[0].path, 'utf8')
+				const saxStream = sax.createStream(true)
+
+				let points = []
+				saxStream.on('opentag', (node) => {
+					if (node.name === 'trkpt') {
+						const lat = parseFloat(node.attributes.lat)
+						const lon = parseFloat(node.attributes.lon)
+						points.push([lat, lon])
+					}
+				})
+
+				gpxReadStream.pipe(saxStream)
+
+				await new Promise((resolve, reject) => {
+					gpxReadStream.on('end', resolve)
+					gpxReadStream.on('error', reject)
+				})
+
 				gpxUrl = polyline.encode(points)
-				
 			}
 		}
 
