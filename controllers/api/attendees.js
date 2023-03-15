@@ -81,7 +81,6 @@ async function create(req, res, next) {
 				const parsedGpx = new gpxParser()
 				parsedGpx.parse(gpxFileContents)
 				const points = parsedGpx.tracks[0].points.map(point => [point.lat, point.lon])
-				console.log(polyline.encode(points))
 				gpxUrl = polyline.encode(points)
 				
 			}
