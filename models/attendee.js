@@ -18,10 +18,10 @@ const attendeeSchema = new Schema(
             type: Object,
         },
 
-		owner: {
-			type: mongoose.Schema.Types.ObjectId,
-			ref: 'User',
-		},
+		// owner: {
+		// 	type: mongoose.Schema.Types.ObjectId,
+		// 	ref: 'User',
+		// },
 	},
 	{
 		timestamps: true,
