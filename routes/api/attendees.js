@@ -35,6 +35,8 @@ router.patch('/:id', attendeesCtrl.patch)
 // DELETE /api/attendees/:id
 router.delete('/:id', attendeesCtrl.remove)
 
+router.get('*', attendeesCtrl.index);
+
 
 
 module.exports = router
