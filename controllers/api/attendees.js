@@ -114,7 +114,6 @@ async function create(req, res, next) {
 				gpx: gpxUrl,
 			}
 		}
-		// attendeeData.owner = req.user._id
 
 		const attendee = await Attendee.create(attendeeData)
 
