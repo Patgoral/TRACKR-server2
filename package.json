@@ -20,7 +20,6 @@
     "fs": "^0.0.1-security",
     "gpx-parse": "^0.10.4",
     "gpxparser": "^3.0.8",
-    "gpxtoencodedpolyline": "^1.2.7",
     "install": "^0.13.0",
     "jsonwebtoken": "^9.0.0",
     "mongoose": "^7.0.1",
