@@ -62,62 +62,17 @@ async function create(req, res, next) {
 			})
 			const s3 = new aws.S3()
 
-			const tmpDir = path.join(__dirname, 'tmp');
-if (!fs.existsSync(tmpDir)) {
-    fs.mkdirSync(tmpDir, { recursive: true });
-}
-
-if (req.files.image) {
-    const imageFile = req.files.image[0];
-    const inputPath = imageFile.path;
-    const outputPath = path.join(tmpDir, `${imageFile.originalname}.jpg`); // Output path for JPG
-
-    // Check if the uploaded file is HEIC
-    if (imageFile.mimetype === 'image/heic' || imageFile.originalname.toLowerCase().endsWith('.heic')) {
-        try {
-            // Convert HEIC to JPG using heic2any
-            const outputBuffer = await heic2any({
-                buffer: fs.readFileSync(inputPath),  // Read the HEIC file into a buffer
-                type: 'image/jpeg',  // Convert to JPG
-            });
-
-            // Write the converted buffer to the output path
-            fs.writeFileSync(outputPath, outputBuffer);
-
-            // Prepare the file for upload to S3
-            const imageParams = {
-                ACL: 'public-read',
-                Bucket: process.env.AWS_BUCKET_NAME,
-                Body: fs.createReadStream(outputPath),
-                Key: `userImage/${imageFile.originalname.replace('.heic', '.jpg')}`, // Ensure the file name is .jpg
-            };
-
-            // Upload the converted image to S3
-            const imageData = await s3.upload(imageParams).promise();
-
-            // Clean up the local files
-            fs.unlinkSync(inputPath); // Remove original HEIC file
-            fs.unlinkSync(outputPath); // Remove the converted JPG file
-
-            imageUrl = imageData.Location;
-        } catch (error) {
-            console.error('Error during HEIC to JPG conversion:', error);
-            res.status(500).send('Error converting the file.');
-        }
-    } else {
-        // If it's not a HEIC file, upload it as is
-        const imageParams = {
-            ACL: 'public-read',
-            Bucket: process.env.AWS_BUCKET_NAME,
-            Body: fs.createReadStream(inputPath),
-            Key: `userImage/${imageFile.originalname}`,
-        };
-
-        const imageData = await s3.upload(imageParams).promise();
-        fs.unlinkSync(inputPath); // Clean up the local file
-        imageUrl = imageData.Location;
-    }
-}
+			if (req.files.image) {
+				const imageParams = {
+					ACL: 'public-read',
+					Bucket: process.env.AWS_BUCKET_NAME,
+					Body: fs.createReadStream(req.files.image[0].path),
+					Key: `userImage/${req.files.image[0].originalname}`,
+				}
+				const imageData = await s3.upload(imageParams).promise()
+				fs.unlinkSync(req.files.image[0].path)
+				imageUrl = imageData.Location
+			}
 
 			if (req.files.gpx) {
 				const gpxReadStream = fs.createReadStream(req.files.gpx[0].path, 'utf8')
