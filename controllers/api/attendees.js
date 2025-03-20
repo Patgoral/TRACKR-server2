@@ -3,6 +3,7 @@ const aws = require('aws-sdk')
 const fs = require('fs')
 const polyline = require('polyline')
 const sax = require('sax')
+const heic2jpg = require('heic2jpg');
 
 // INDEX ALL ATTENDEES
 async function index(req, res, next) {
@@ -63,15 +64,44 @@ async function create(req, res, next) {
 			const s3 = new aws.S3()
 
 			if (req.files.image) {
-				const imageParams = {
-					ACL: 'public-read',
-					Bucket: process.env.AWS_BUCKET_NAME,
-					Body: fs.createReadStream(req.files.image[0].path),
-					Key: `userImage/${req.files.image[0].originalname}`,
+				let imageFile = req.files.image[0];
+				
+				// Check if the file is HEIC and convert it to JPG
+				if (imageFile.mimetype === 'image/heic' || imageFile.originalname.toLowerCase().endsWith('.heic')) {
+					const convertedImagePath = `./tmp/${imageFile.originalname}.jpg`; // Temporary path for converted file
+					
+					// Convert HEIC to JPG
+					await heic2jpg({ input: imageFile.path, output: convertedImagePath });
+					
+					// Prepare the file for upload
+					const imageParams = {
+						ACL: 'public-read',
+						Bucket: process.env.AWS_BUCKET_NAME,
+						Body: fs.createReadStream(convertedImagePath),
+						Key: `userImage/${imageFile.originalname.replace('.heic', '.jpg')}`,
+					};
+			
+					// Upload the converted image to S3
+					const imageData = await s3.upload(imageParams).promise();
+			
+					// Clean up the local files
+					fs.unlinkSync(imageFile.path); // Remove original HEIC file
+					fs.unlinkSync(convertedImagePath); // Remove the converted JPG file
+			
+					imageUrl = imageData.Location;
+				} else {
+					// Handle the case where it's not a HEIC file (just upload it as is)
+					const imageParams = {
+						ACL: 'public-read',
+						Bucket: process.env.AWS_BUCKET_NAME,
+						Body: fs.createReadStream(imageFile.path),
+						Key: `userImage/${imageFile.originalname}`,
+					};
+			
+					const imageData = await s3.upload(imageParams).promise();
+					fs.unlinkSync(imageFile.path); // Clean up the local file
+					imageUrl = imageData.Location;
 				}
-				const imageData = await s3.upload(imageParams).promise()
-				fs.unlinkSync(req.files.image[0].path)
-				imageUrl = imageData.Location
 			}
 
 			if (req.files.gpx) {
