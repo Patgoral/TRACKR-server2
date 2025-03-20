@@ -3,8 +3,6 @@ const aws = require('aws-sdk')
 const fs = require('fs')
 const polyline = require('polyline')
 const sax = require('sax')
-const sharp = require('sharp') 
-const path = require('path')
 
 // INDEX ALL ATTENDEES
 async function index(req, res, next) {
@@ -64,57 +62,18 @@ async function create(req, res, next) {
 			})
 			const s3 = new aws.S3()
 
-			// Handle image file (check for HEIC and convert if needed)
 			if (req.files.image) {
-				const imagePath = req.files.image[0].path
-				const originalName = req.files.image[0].originalname
-				const fileExtension = path.extname(originalName).toLowerCase() // Get the file extension
-				const newFileName = `${uuid.v4()}.jpg`;
-				const newFilePath = `temp_${originalName}.jpg` // Temporary name for the converted file
-
-				// Check if the image is HEIC
-				if (fileExtension === '.heic') {
-					// Convert HEIC to JPEG using sharp and await the result
-					try {
-						await sharp(imagePath)
-							.toFormat('jpeg')
-							.toFile(newFilePath); // Convert and save to a new file
-	
-						// Upload the converted image to S3
-						const imageParams = {
-							ACL: 'public-read',
-							Bucket: process.env.AWS_BUCKET_NAME,
-							Body: fs.createReadStream(newFilePath),
-							Key: `userImage/${newFilePath}`,
-						};
-						const imageData = await s3.upload(imageParams).promise();
-	
-						// Clean up: delete the local converted file
-						fs.unlinkSync(imagePath);
-						fs.unlinkSync(newFilePath);
-	
-						imageUrl = imageData.Location;
-					} catch (err) {
-						console.error('Error during HEIC conversion or S3 upload:', err);
-					}
-				} else {
-					// If it's not a HEIC, upload the original file to S3
-					const imageParams = {
-						ACL: 'public-read',
-						Bucket: process.env.AWS_BUCKET_NAME,
-						Body: fs.createReadStream(imagePath),
-						Key: `userImage/${originalName}`,
-					}
-					const imageData = await s3.upload(imageParams).promise()
-
-					// Clean up: delete the local original file
-					fs.unlinkSync(imagePath)
-
-					imageUrl = imageData.Location
+				const imageParams = {
+					ACL: 'public-read',
+					Bucket: process.env.AWS_BUCKET_NAME,
+					Body: fs.createReadStream(req.files.image[0].path),
+					Key: `userImage/${req.files.image[0].originalname}`,
 				}
+				const imageData = await s3.upload(imageParams).promise()
+				fs.unlinkSync(req.files.image[0].path)
+				imageUrl = imageData.Location
 			}
 
-			// Handle GPX file
 			if (req.files.gpx) {
 				const gpxReadStream = fs.createReadStream(req.files.gpx[0].path, 'utf8')
 				const saxStream = sax.createStream(true)
@@ -139,7 +98,6 @@ async function create(req, res, next) {
 			}
 		}
 
-		// Prepare attendee data to save in the database
 		let attendeeData = {}
 		if (req.body.attendee) {
 			attendeeData = { ...req.body.attendee }
@@ -156,7 +114,6 @@ async function create(req, res, next) {
 			}
 		}
 
-		// Create a new attendee
 		const attendee = await Attendee.create(attendeeData)
 
 		res.status(201).json({ attendee })
