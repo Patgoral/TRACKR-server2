@@ -29,6 +29,7 @@
     "polyline": "^0.2.0",
     "polyline-encoded": "^0.0.9",
     "sax": "^1.2.4",
+    "sharp": "^0.33.5",
     "uuid": "^9.0.0"
   }
 }
