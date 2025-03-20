@@ -79,24 +79,23 @@ async function create(req, res, next) {
 						await sharp(imagePath)
 							.toFormat('jpeg')
 							.toFile(newFilePath); // Convert and save to a new file
-			
+	
 						// Upload the converted image to S3
 						const imageParams = {
 							ACL: 'public-read',
 							Bucket: process.env.AWS_BUCKET_NAME,
 							Body: fs.createReadStream(newFilePath),
-							Key: `userImage/${newFileName}`, // Use the unique name for S3
+							Key: `userImage/${newFilePath}`,
 						};
 						const imageData = await s3.upload(imageParams).promise();
-			
+	
 						// Clean up: delete the local converted file
 						fs.unlinkSync(imagePath);
 						fs.unlinkSync(newFilePath);
-			
-						imageUrl = imageData.Location; // The URL of the uploaded image
+	
+						imageUrl = imageData.Location;
 					} catch (err) {
 						console.error('Error during HEIC conversion or S3 upload:', err);
-						// You may want to send an error response to the client
 					}
 				} else {
 					// If it's not a HEIC, upload the original file to S3
