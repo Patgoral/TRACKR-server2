@@ -63,32 +63,37 @@ async function create(req, res, next) {
 			})
 			const s3 = new aws.S3()
 
-			if (req.files.image) {
+			if (req.files && req.files.image && req.files.image.length > 0) {
 				let imageFile = req.files.image[0];
-				
-				// Check if the file is HEIC and convert it to JPG
+			
+				// Check if the file has a valid mimetype or extension
 				if (imageFile.mimetype === 'image/heic' || imageFile.originalname.toLowerCase().endsWith('.heic')) {
 					const convertedImagePath = `./tmp/${imageFile.originalname}.jpg`; // Temporary path for converted file
 					
-					// Convert HEIC to JPG
-					await heic2jpg({ input: imageFile.path, output: convertedImagePath });
+					try {
+						// Convert HEIC to JPG
+						await heic2jpg({ input: imageFile.path, output: convertedImagePath });
 					
-					// Prepare the file for upload
-					const imageParams = {
-						ACL: 'public-read',
-						Bucket: process.env.AWS_BUCKET_NAME,
-						Body: fs.createReadStream(convertedImagePath),
-						Key: `userImage/${imageFile.originalname.replace('.heic', '.jpg')}`,
-					};
-			
-					// Upload the converted image to S3
-					const imageData = await s3.upload(imageParams).promise();
-			
-					// Clean up the local files
-					fs.unlinkSync(imageFile.path); // Remove original HEIC file
-					fs.unlinkSync(convertedImagePath); // Remove the converted JPG file
-			
-					imageUrl = imageData.Location;
+						// Prepare the file for upload
+						const imageParams = {
+							ACL: 'public-read',
+							Bucket: process.env.AWS_BUCKET_NAME,
+							Body: fs.createReadStream(convertedImagePath),
+							Key: `userImage/${imageFile.originalname.replace('.heic', '.jpg')}`,
+						};
+					
+						// Upload the converted image to S3
+						const imageData = await s3.upload(imageParams).promise();
+					
+						// Clean up the local files
+						fs.unlinkSync(imageFile.path); // Remove original HEIC file
+						fs.unlinkSync(convertedImagePath); // Remove the converted JPG file
+					
+						imageUrl = imageData.Location;
+					} catch (error) {
+						console.error('Error converting HEIC to JPG:', error);
+						res.status(500).send('Error converting the file.');
+					}
 				} else {
 					// Handle the case where it's not a HEIC file (just upload it as is)
 					const imageParams = {
