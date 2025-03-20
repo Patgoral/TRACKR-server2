@@ -74,10 +74,10 @@ async function create(req, res, next) {
 				// Check if the image is HEIC
 				if (fileExtension === '.heic') {
 					// Convert HEIC to JPEG using sharp
-					await sharp(imagePath)
+						 sharp(imagePath)
 						.toFormat('jpeg')
 						.toFile(newFilePath, async (err, info) => {
-							if (err) {
+							if (err) {is 
 								console.error('Error during conversion', err)
 								return
 							}
