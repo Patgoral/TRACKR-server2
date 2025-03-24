@@ -22,6 +22,7 @@
     "express": "^4.18.2",
     "fs": "^0.0.1-security",
     "gpx-parse": "^0.10.4",
+    "haversine": "^1.1.1",
     "heic-convert": "^2.1.0",
     "heic2any": "^0.0.4",
     "install": "^0.13.0",

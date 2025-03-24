@@ -7,21 +7,28 @@ const heicConvert = require('heic-convert')
 
 
 // INDEX ALL ATTENDEES
-async function index(req, res, next) {
-	try {
-		Attendee.find()
-			.then((attendees) => {
-				return attendees
-					.map((attendee) => attendee)
-					.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-			})
-			.then((attendees) => {
-				res.status(200).json({ attendees: attendees })
-			})
-	} catch (error) {
-		res.status(400).json(error)
-	}
+async function index(req, res) {
+    try {
+        const { year } = req.query;
+
+        const filter = {};
+
+        if (year) {
+            const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
+            const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`);
+            filter.date = { $gte: startOfYear, $lt: endOfYear };
+        }
+
+        // Sort by date ascending (oldest first)
+        const attendees = await Attendee.find(filter).sort({ date: 1 });
+
+        res.status(200).json({ attendees });
+
+    } catch (error) {
+        res.status(400).json(error);
+    }
 }
+
 
 // SHOW USER ATTENDEES
 async function show(req, res, next) {
