@@ -33,7 +33,7 @@ async function index(req, res) {
         }
 
         // Sort by date ascending (oldest first)
-        const attendees = await Attendee.find(filter).sort({ date: 1 }.select('-gpx'));
+        const attendees = await Attendee.find(filter).sort({ date: 1 }).select('-gpx');
 
         res.status(200).json({ attendees });
 
