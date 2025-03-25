@@ -4,7 +4,20 @@ const fs = require('fs')
 const polyline = require('polyline')
 const sax = require('sax')
 const heicConvert = require('heic-convert')
+const moment = require('moment') 
+const geolib = require('geolib')
 
+
+const targetCoordinates = { lat: 33.229114, lon: -83.523866 }
+
+// Function to calculate if a point is within 500 feet
+function isWithin500Feet(lat, lon) {
+  const distance = geolib.getDistance(
+    { latitude: lat, longitude: lon },
+    targetCoordinates
+  )
+  return distance <= 500 // 500 feet
+}
 
 // INDEX ALL ATTENDEES
 async function index(req, res) {
@@ -122,51 +135,76 @@ async function create(req, res, next) {
 			if (req.files.gpx) {
 				const gpxReadStream = fs.createReadStream(req.files.gpx[0].path, 'utf8')
 				const saxStream = sax.createStream(true)
-
+		
 				let points = []
+				
 				saxStream.on('opentag', (node) => {
-					if (node.name === 'trkpt') {
-						const lat = parseFloat(node.attributes.lat)
-						const lon = parseFloat(node.attributes.lon)
+				  if (node.name === 'trkpt') {
+					const lat = parseFloat(node.attributes.lat)
+					const lon = parseFloat(node.attributes.lon)
+					const time = node.attributes.time // Time in ISO format
+					const gpxTime = moment(time).utcOffset(-5) // Convert to EST (UTC -5)
+		
+					// Only consider points after 2:00 PM EST
+					if (gpxTime.isAfter(moment('14:00:00', 'HH:mm:ss'))) {
+					  // Check if the point is within 500 feet of the target coordinates
+					  if (isWithin500Feet(lat, lon)) {
 						points.push([lat, lon])
+						gpxTimeStamps.push(gpxTime.toISOString()) // Add valid timestamp to the array
+					  }
 					}
+				  }
 				})
-
+		
 				gpxReadStream.pipe(saxStream)
-
+		
 				await new Promise((resolve, reject) => {
-					gpxReadStream.on('end', resolve)
-					gpxReadStream.on('error', reject)
+				  gpxReadStream.on('end', resolve)
+				  gpxReadStream.on('error', reject)
 				})
-
-				gpxUrl = polyline.encode(points)
+		
+				// If we have valid points, encode them into a polyline
+				if (points.length > 0) {
+				  gpxUrl = polyline.encode(points)
+				}
+			  }
 			}
-		}
-
-		let attendeeData = {}
-		if (req.body.attendee) {
-			attendeeData = { ...req.body.attendee }
-			if (imageUrl) {
+		
+			// Prepare the attendee data for saving
+			let attendeeData = {}
+			if (req.body.attendee) {
+			  attendeeData = { ...req.body.attendee }
+			  if (imageUrl) {
 				attendeeData.image = imageUrl
-			}
-			if (gpxUrl) {
+			  }
+			  if (gpxUrl) {
 				attendeeData.gpx = gpxUrl
-			}
-		} else {
-			attendeeData = {
+			  }
+			  if (gpxTimeStamps.length > 0) {
+				// Add GPXTime to attendee data
+				attendeeData.GPXTime = gpxTimeStamps
+			  }
+			} else {
+			  attendeeData = {
 				image: imageUrl,
 				gpx: gpxUrl,
+			  }
+			  if (gpxTimeStamps.length > 0) {
+				// Add GPXTime to attendee data
+				attendeeData.GPXTime = gpxTimeStamps
+			  }
 			}
+		
+			// Save the attendee to the database
+			const attendee = await Attendee.create(attendeeData)
+		
+			// Respond with the created attendee data
+			res.status(201).json({ attendee })
+		  } catch (error) {
+			console.log('Error occurred while trying to upload to S3 bucket', error)
+			res.status(400).json(error)
+		  }
 		}
-
-		const attendee = await Attendee.create(attendeeData)
-
-		res.status(201).json({ attendee })
-	} catch (error) {
-		console.log('Error occurred while trying to upload to S3 bucket', error)
-		res.status(400).json(error)
-	}
-}
 
 // PATCH
 async function patch(req, res, next) {
