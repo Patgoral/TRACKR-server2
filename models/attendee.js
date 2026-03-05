@@ -12,6 +12,10 @@ const attendeeSchema = new Schema(
 			type: String,
 			required: true,
 		},
+		geared: {
+			type: String,
+			required: true,
+		},
 		date: {
 			type: Date,
 		},

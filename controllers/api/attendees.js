@@ -6,8 +6,6 @@ const sax = require('sax')
 const heicConvert = require('heic-convert')
 
 
-
-// INDEX ALL ATTENDEES
 // INDEX ALL ATTENDEES
 async function index(req, res) {
     try {
