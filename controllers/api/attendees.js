@@ -236,7 +236,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 	}
 
 	const startIdx = Math.max(1, approach.armedAtRidePointIndex)
-	git add .
 	for (let i = Math.max(1, startIdx); i < ridePoints.length; i++) {
 		const p1 = ridePoints[i - 1]
 		const p2 = ridePoints[i]
