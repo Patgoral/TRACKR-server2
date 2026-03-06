@@ -157,8 +157,8 @@ function analyzeFinishApproach(ridePoints, finishSegment) {
 	let armedAtRidePointIndex = -1
 	let armedAtTime = null
 	let armedMatches = 0
+	let consecutiveArmMatches = 0
 
-	// use the earlier part of the finish segment as the arming zone
 	const armPoints = finishSegment.slice(0, Math.max(2, finishSegment.length - 2))
 
 	for (let i = 0; i < ridePoints.length; i++) {
@@ -175,12 +175,18 @@ function analyzeFinishApproach(ridePoints, finishSegment) {
 
 		if (nearArmZone) {
 			armedMatches++
+			consecutiveArmMatches++
 
-			if (!armed && armedMatches >= MIN_ARMED_MATCHES) {
+			if (!armed && consecutiveArmMatches >= MIN_ARMED_MATCHES) {
 				armed = true
-				armedAtRidePointIndex = i
-				armedAtTime = point.time ? new Date(point.time) : null
+				armedAtRidePointIndex = i - consecutiveArmMatches + 1
+				armedAtTime = ridePoints[armedAtRidePointIndex]?.time
+					? new Date(ridePoints[armedAtRidePointIndex].time)
+					: null
+				break
 			}
+		} else {
+			consecutiveArmMatches = 0
 		}
 	}
 
@@ -229,12 +235,9 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	const startIdx =
-		approach.armedAtRidePointIndex > 0
-			? Math.max(1, approach.armedAtRidePointIndex - 2)
-			: 1
-
-	for (let i = startIdx; i < ridePoints.length; i++) {
+	const startIdx = Math.max(1, approach.armedAtRidePointIndex)
+	git add .
+	for (let i = Math.max(1, startIdx); i < ridePoints.length; i++) {
 		const p1 = ridePoints[i - 1]
 		const p2 = ridePoints[i]
 
@@ -243,7 +246,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		const d1 = getDistanceMeters(p1.lat, p1.lon, finishPoint[0], finishPoint[1])
 		const d2 = getDistanceMeters(p2.lat, p2.lon, finishPoint[0], finishPoint[1])
 
-		// only evaluate crossings near the finish
 		if (d1 > FINISH_LINE_NEAR_RADIUS_METERS && d2 > FINISH_LINE_NEAR_RADIUS_METERS) {
 			continue
 		}
@@ -251,11 +253,8 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		const s1 = getSignedFinishProgress(p1, finishSegment)
 		const s2 = getSignedFinishProgress(p2, finishSegment)
 
-		if (s1 === null || s2 === null) {
-			continue
-		}
+		if (s1 === null || s2 === null) continue
 
-		// correct direction: before finish -> after finish
 		if (s1 < 0 && s2 >= 0) {
 			const denom = s2 - s1
 			const ratio = denom === 0 ? 1 : (-s1 / denom)
@@ -280,8 +279,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	// fallback: if armed and a point is very near finish and already on/after the finish line
-	// this helps when low sample rate misses the exact straddle
 	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p = ridePoints[i]
 		if (!p.time) continue
