@@ -21,7 +21,6 @@ const FINISH_SEGMENT = [
 
 
 
-// Tune these if needed
 const SEGMENT_MATCH_RADIUS_METERS = 30
 const FINISH_LINE_NEAR_RADIUS_METERS = 35
 const MIN_ORDERED_MATCHES = 4
@@ -365,50 +364,39 @@ function rideHasTimestamps(ridePoints) {
 // INDEX ALL ATTENDEES
 async function index(req, res) {
   try {
-    const { year } = req.query;
+    const { year } = req.query
 
-    const pipeline = [];
+    const pipeline = [
+      {
+        $addFields: {
+          eventTime: { $ifNull: ['$finishTime', '$date'] }
+        }
+      }
+    ]
 
     if (year) {
-      const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
-      const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`);
+      const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`)
+      const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`)
 
       pipeline.push({
         $match: {
-          $or: [
-            { finishTime: { $gte: startOfYear, $lt: endOfYear } },
-            { date: { $gte: startOfYear, $lt: endOfYear } }
-          ]
+          eventTime: { $gte: startOfYear, $lt: endOfYear }
         }
-      });
+      })
     }
 
-    // Create a sortable field using finishTime OR date
-    pipeline.push({
-      $addFields: {
-        eventTime: { $ifNull: ["$finishTime", "$date"] }
-      }
-    });
+    pipeline.push(
+      { $sort: { eventTime: 1 } },
+      { $project: { gpx: 0 } }
+    )
 
-    // Sort by the combined field
-    pipeline.push({
-      $sort: { eventTime: 1 }
-    });
+    const attendees = await Attendee.aggregate(pipeline)
 
-    // Remove GPX
-    pipeline.push({
-      $project: { gpx: 0 }
-    });
-
-    const attendees = await Attendee.aggregate(pipeline);
-
-    res.status(200).json({ attendees });
-
+    res.status(200).json({ attendees })
   } catch (error) {
-    res.status(400).json(error);
+    res.status(400).json(error)
   }
 }
-
 
 // SHOW USER ATTENDEES
 async function show(req, res, next) {
