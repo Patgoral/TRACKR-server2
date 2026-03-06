@@ -366,34 +366,31 @@ async function index(req, res) {
   try {
     const { year } = req.query
 
-    const pipeline = [
-      {
-        $addFields: {
-          eventTime: { $ifNull: ['$finishTime', '$date'] }
-        }
-      }
-    ]
+    const filter = {}
 
     if (year) {
       const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`)
-      const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`)
+      const endOfYear = new Date(`${parseInt(year, 10) + 1}-01-01T00:00:00.000Z`)
 
-      pipeline.push({
-        $match: {
-          eventTime: { $gte: startOfYear, $lt: endOfYear }
-        }
-      })
+      filter.$or = [
+        { finishTime: { $gte: startOfYear, $lt: endOfYear } },
+        { date: { $gte: startOfYear, $lt: endOfYear } }
+      ]
     }
 
-    pipeline.push(
-      { $sort: { eventTime: 1 } },
-      { $project: { gpx: 0 } }
-    )
+    const attendees = await Attendee.find(filter)
+      .select('-gpx')
+      .lean()
 
-    const attendees = await Attendee.aggregate(pipeline)
+    attendees.sort((a, b) => {
+      const aTime = new Date(a.finishTime ?? a.date ?? 0).getTime()
+      const bTime = new Date(b.finishTime ?? b.date ?? 0).getTime()
+      return aTime - bTime
+    })
 
     res.status(200).json({ attendees })
   } catch (error) {
+    console.log(error)
     res.status(400).json(error)
   }
 }
