@@ -8,16 +8,15 @@ const heicConvert = require('heic-convert')
 
 // Your finish segment, in the correct travel direction
 const FINISH_SEGMENT = [
-	[33.22871, -83.52579],
-	[33.2288, -83.52533],
-	[33.22883, -83.52516],
-	[33.228859, -83.52495],
-	[33.2289, -83.52474],
-	[33.22892, -83.52462],
-	[33.228949, -83.52431],
-	[33.228969, -83.5241],
-	[33.22899, -83.52388],
-	[33.229, -83.52384],
+	[33.22871,  -83.52579],
+	[33.228742, -83.52557],
+	[33.228777, -83.52534],
+	[33.228814, -83.52509],
+	[33.228853, -83.52484],
+	[33.228894, -83.52458],
+	[33.228934, -83.52436],
+	[33.228955, -83.52420],
+	[33.228969, -83.52409]
 ]
 
 
@@ -49,7 +48,6 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
 	return R * c
 }
 
-// Convert lat/lon to local planar x/y in meters around a reference latitude
 function latLonToXY(lat, lon, refLat) {
 	const metersPerDegLat = 111320
 	const metersPerDegLon = 111320 * Math.cos(toRad(refLat))
@@ -366,25 +364,49 @@ function rideHasTimestamps(ridePoints) {
 
 // INDEX ALL ATTENDEES
 async function index(req, res) {
-    try {
-        const { year } = req.query;
+  try {
+    const { year } = req.query;
 
-        const filter = {};
+    const pipeline = [];
 
-        if (year) {
-            const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
-            const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`);
-            filter.date = { $gte: startOfYear, $lt: endOfYear };
+    if (year) {
+      const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
+      const endOfYear = new Date(`${parseInt(year) + 1}-01-01T00:00:00.000Z`);
+
+      pipeline.push({
+        $match: {
+          $or: [
+            { finishTime: { $gte: startOfYear, $lt: endOfYear } },
+            { date: { $gte: startOfYear, $lt: endOfYear } }
+          ]
         }
-
-        // Sort by date ascending (oldest first)
-        const attendees = await Attendee.find(filter).sort({ date: 1 }).select('-gpx');
-
-        res.status(200).json({ attendees });
-
-    } catch (error) {
-        res.status(400).json(error);
+      });
     }
+
+    // Create a sortable field using finishTime OR date
+    pipeline.push({
+      $addFields: {
+        eventTime: { $ifNull: ["$finishTime", "$date"] }
+      }
+    });
+
+    // Sort by the combined field
+    pipeline.push({
+      $sort: { eventTime: 1 }
+    });
+
+    // Remove GPX
+    pipeline.push({
+      $project: { gpx: 0 }
+    });
+
+    const attendees = await Attendee.aggregate(pipeline);
+
+    res.status(200).json({ attendees });
+
+  } catch (error) {
+    res.status(400).json(error);
+  }
 }
 
 
