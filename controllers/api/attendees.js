@@ -365,7 +365,7 @@ function rideHasTimestamps(ridePoints) {
 // INDEX ALL ATTENDEES
 async function index(req, res) {
   try {
-    const { year } = req.query;
+    const { year } = 2025;
 
     const pipeline = [];
 
