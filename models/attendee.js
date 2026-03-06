@@ -14,10 +14,21 @@ const attendeeSchema = new Schema(
 		},
 		geared: {
 			type: String,
-			required: true,
 		},
 		date: {
 			type: Date,
+		},
+		finishTime: {
+		type: Date,
+		default: null,
+		},
+		finishDetected: {
+			type: Boolean,
+			default: false,
+		},
+		finishMatchMeta: {
+			type: Object,
+			default: null,
 		},
 		image: { 
             type: String ,

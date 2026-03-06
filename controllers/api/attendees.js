@@ -6,6 +6,364 @@ const sax = require('sax')
 const heicConvert = require('heic-convert')
 
 
+// Your finish segment, in the correct travel direction
+const FINISH_SEGMENT = [
+	[33.22871, -83.52579],
+	[33.2288, -83.52533],
+	[33.22883, -83.52516],
+	[33.228859, -83.52495],
+	[33.2289, -83.52474],
+	[33.22892, -83.52462],
+	[33.228949, -83.52431],
+	[33.228969, -83.5241],
+	[33.22899, -83.52388],
+	[33.229, -83.52384],
+]
+
+
+
+// Tune these if needed
+const SEGMENT_MATCH_RADIUS_METERS = 30
+const FINISH_LINE_NEAR_RADIUS_METERS = 35
+const MIN_ORDERED_MATCHES = 4
+const MIN_DIRECTION_PROGRESS = 3
+
+function toRad(deg) {
+	return (deg * Math.PI) / 180
+}
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+	const R = 6371000
+
+	const dLat = toRad(lat2 - lat1)
+	const dLon = toRad(lon2 - lon1)
+
+	const a =
+		Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+		Math.cos(toRad(lat1)) *
+			Math.cos(toRad(lat2)) *
+			Math.sin(dLon / 2) *
+			Math.sin(dLon / 2)
+
+	const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+	return R * c
+}
+
+// Convert lat/lon to local planar x/y in meters around a reference latitude
+function latLonToXY(lat, lon, refLat) {
+	const metersPerDegLat = 111320
+	const metersPerDegLon = 111320 * Math.cos(toRad(refLat))
+
+	return {
+		x: lon * metersPerDegLon,
+		y: lat * metersPerDegLat,
+	}
+}
+
+function subtractVec(a, b) {
+	return { x: a.x - b.x, y: a.y - b.y }
+}
+
+function dot(a, b) {
+	return a.x * b.x + a.y * b.y
+}
+
+function cross(a, b) {
+	return a.x * b.y - a.y * b.x
+}
+
+function magnitude(a) {
+	return Math.sqrt(a.x * a.x + a.y * a.y)
+}
+
+function interpolateTime(t1, t2, ratio) {
+	const ms1 = new Date(t1).getTime()
+	const ms2 = new Date(t2).getTime()
+
+	if (Number.isNaN(ms1) || Number.isNaN(ms2)) return null
+	if (ms2 < ms1) return new Date(ms1)
+
+	const clampedRatio = Math.max(0, Math.min(1, ratio))
+	return new Date(ms1 + (ms2 - ms1) * clampedRatio)
+}
+
+async function parseRideGpx(filePath) {
+	return new Promise((resolve, reject) => {
+		const gpxReadStream = fs.createReadStream(filePath, 'utf8')
+		const saxStream = sax.createStream(true)
+
+		const points = []
+		let currentPoint = null
+		let textBuffer = ''
+
+		saxStream.on('opentag', (node) => {
+			textBuffer = ''
+
+			if (node.name === 'trkpt') {
+				currentPoint = {
+					lat: parseFloat(node.attributes.lat),
+					lon: parseFloat(node.attributes.lon),
+					time: null,
+				}
+			}
+		})
+
+		saxStream.on('text', (text) => {
+			textBuffer += text
+		})
+
+		saxStream.on('cdata', (text) => {
+			textBuffer += text
+		})
+
+		saxStream.on('closetag', (tagName) => {
+			if (tagName === 'time' && currentPoint) {
+				currentPoint.time = textBuffer.trim()
+			}
+
+			if (tagName === 'trkpt' && currentPoint) {
+				points.push(currentPoint)
+				currentPoint = null
+			}
+
+			textBuffer = ''
+		})
+
+		saxStream.on('end', () => resolve(points))
+		saxStream.on('error', reject)
+		gpxReadStream.on('error', reject)
+
+		gpxReadStream.pipe(saxStream)
+	})
+}
+
+function getClosestSegmentIndex(point, segment, radiusMeters = SEGMENT_MATCH_RADIUS_METERS) {
+	let closestIdx = -1
+	let closestDist = Infinity
+
+	for (let i = 0; i < segment.length; i++) {
+		const segPoint = segment[i]
+		const dist = getDistanceMeters(point.lat, point.lon, segPoint[0], segPoint[1])
+
+		if (dist < closestDist) {
+			closestDist = dist
+			closestIdx = i
+		}
+	}
+
+	if (closestDist <= radiusMeters) {
+		return { index: closestIdx, distance: closestDist }
+	}
+
+	return { index: -1, distance: closestDist }
+}
+
+function analyzeOrderedSegmentProgress(ridePoints, finishSegment) {
+	let lastMatchedIndex = -1
+	let orderedMatches = 0
+	let progressedSteps = 0
+	let enteredSegmentAtRidePointIndex = -1
+	let enteredSegmentAtTime = null
+
+	for (let i = 0; i < ridePoints.length; i++) {
+		const point = ridePoints[i]
+		const match = getClosestSegmentIndex(point, finishSegment)
+
+		if (match.index === -1) continue
+
+		if (enteredSegmentAtRidePointIndex === -1) {
+			enteredSegmentAtRidePointIndex = i
+			enteredSegmentAtTime = point.time ? new Date(point.time) : null
+		}
+
+		if (lastMatchedIndex === -1) {
+			lastMatchedIndex = match.index
+			orderedMatches++
+			continue
+		}
+
+		// Same index or next indices are acceptable.
+		if (match.index === lastMatchedIndex) {
+			continue
+		}
+
+		// Forward movement through the segment
+		if (match.index > lastMatchedIndex) {
+			progressedSteps += (match.index - lastMatchedIndex)
+			orderedMatches++
+			lastMatchedIndex = match.index
+			continue
+		}
+
+		// Big backwards jump suggests wrong direction / turn-around
+		if (match.index < lastMatchedIndex - 1) {
+			return {
+				validDirection: false,
+				orderedMatches,
+				progressedSteps,
+				lastMatchedIndex,
+				enteredSegmentAtRidePointIndex,
+				enteredSegmentAtTime,
+			}
+		}
+	}
+
+	return {
+		validDirection:
+			orderedMatches >= MIN_ORDERED_MATCHES &&
+			progressedSteps >= MIN_DIRECTION_PROGRESS &&
+			lastMatchedIndex >= finishSegment.length - 2,
+		orderedMatches,
+		progressedSteps,
+		lastMatchedIndex,
+		enteredSegmentAtRidePointIndex,
+		enteredSegmentAtTime,
+	}
+}
+
+/*
+Detect crossing of the finish line.
+Finish line = a line perpendicular to the final segment, passing through the final point.
+
+We look for the first rider segment after entering the finish area where:
+- previous point is on the "before finish" side
+- next point is on or past the finish side
+
+Then interpolate the timestamp.
+*/
+function detectFinishCrossingTime(ridePoints, finishSegment) {
+	if (!ridePoints || ridePoints.length < 2 || !finishSegment || finishSegment.length < 2) {
+		return {
+			finishTime: null,
+			finishDetected: false,
+			reason: 'Not enough points',
+		}
+	}
+
+	const progress = analyzeOrderedSegmentProgress(ridePoints, finishSegment)
+
+	if (!progress.validDirection) {
+		return {
+			finishTime: null,
+			finishDetected: false,
+			reason: 'Segment not completed in correct direction',
+			progress,
+		}
+	}
+
+	const finishPoint = finishSegment[finishSegment.length - 1]
+	const prevFinishPoint = finishSegment[finishSegment.length - 2]
+	const refLat = finishPoint[0]
+
+	const finishXY = latLonToXY(finishPoint[0], finishPoint[1], refLat)
+	const prevFinishXY = latLonToXY(prevFinishPoint[0], prevFinishPoint[1], refLat)
+
+	// Direction of road near finish
+	const roadVec = subtractVec(finishXY, prevFinishXY)
+	const roadLen = magnitude(roadVec)
+
+	if (roadLen === 0) {
+		return {
+			finishTime: null,
+			finishDetected: false,
+			reason: 'Invalid finish segment geometry',
+			progress,
+		}
+	}
+
+	// A normal vector to the finish line. Crossing this means passing the finish line.
+	// We use roadVec itself to determine before/after relative to finish point.
+	function signedFinishProgress(lat, lon) {
+		const p = latLonToXY(lat, lon, refLat)
+		const rel = subtractVec(p, finishXY)
+		return dot(rel, roadVec) / roadLen
+	}
+
+	// Start checking from slightly before segment entry if possible
+	const startIdx = Math.max(1, progress.enteredSegmentAtRidePointIndex - 2)
+
+	for (let i = startIdx; i < ridePoints.length; i++) {
+		const p1 = ridePoints[i - 1]
+		const p2 = ridePoints[i]
+
+		if (!p1.time || !p2.time) continue
+
+		const d1 = getDistanceMeters(p1.lat, p1.lon, finishPoint[0], finishPoint[1])
+		const d2 = getDistanceMeters(p2.lat, p2.lon, finishPoint[0], finishPoint[1])
+
+		// Keep it local to finish area so random route crossings elsewhere do not count
+		if (d1 > FINISH_LINE_NEAR_RADIUS_METERS && d2 > FINISH_LINE_NEAR_RADIUS_METERS) {
+			continue
+		}
+
+		const s1 = signedFinishProgress(p1.lat, p1.lon)
+		const s2 = signedFinishProgress(p2.lat, p2.lon)
+
+		// Before finish -> after finish
+		if (s1 < 0 && s2 >= 0) {
+			const denom = s2 - s1
+			const ratio = denom === 0 ? 1 : (-s1 / denom)
+			const finishTime = interpolateTime(p1.time, p2.time, ratio)
+
+			return {
+				finishTime,
+				finishDetected: !!finishTime,
+				reason: finishTime ? 'Finish line crossed' : 'Could not interpolate finish time',
+				progress,
+				matchMeta: {
+					crossingBetweenRidePointIndexes: [i - 1, i],
+					crossingRatio: ratio,
+					p1Time: p1.time,
+					p2Time: p2.time,
+					p1DistanceToFinishMeters: d1,
+					p2DistanceToFinishMeters: d2,
+				},
+			}
+		}
+	}
+
+	// Fallback: first point at or beyond finish if crossing line was not found
+	for (let i = startIdx; i < ridePoints.length; i++) {
+		const p = ridePoints[i]
+		if (!p.time) continue
+
+		const d = getDistanceMeters(p.lat, p.lon, finishPoint[0], finishPoint[1])
+		const s = signedFinishProgress(p.lat, p.lon)
+
+		if (d <= FINISH_LINE_NEAR_RADIUS_METERS && s >= 0) {
+			return {
+				finishTime: new Date(p.time),
+				finishDetected: true,
+				reason: 'Fallback finish detection',
+				progress,
+				matchMeta: {
+					ridePointIndex: i,
+					pointTime: p.time,
+					distanceToFinishMeters: d,
+				},
+			}
+		}
+	}
+
+	return {
+		finishTime: null,
+		finishDetected: false,
+		reason: 'Did not cross finish line',
+		progress,
+	}
+}
+
+function rideHasTimestamps(ridePoints) {
+	if (!ridePoints || ridePoints.length === 0) return false
+
+	for (const p of ridePoints) {
+		if (p.time) return true
+	}
+
+	return false
+}
+
+
 // INDEX ALL ATTENDEES
 async function index(req, res) {
     try {
@@ -62,6 +420,10 @@ async function showAll(req, res, next) {
 async function create(req, res, next) {
 	try {
 		let imageUrl, gpxUrl
+		let finishTime = null
+		let finishDetected = false
+		let finishMatchMeta = null
+
 		if (req.files) {
 			aws.config.setPromisesDependency()
 			aws.config.update({
@@ -72,90 +434,114 @@ async function create(req, res, next) {
 			const s3 = new aws.S3()
 
 			if (req.files.image) {
-				const imageFile = req.files.image[0];
-				let imageBuffer = fs.readFileSync(imageFile.path);
-			
-				// Check if the file is HEIC
-				if (imageFile.mimetype === 'image/heic' || imageFile.originalname.toLowerCase().endsWith('.heic')) {
+				const imageFile = req.files.image[0]
+				let imageBuffer = fs.readFileSync(imageFile.path)
+
+				if (
+					imageFile.mimetype === 'image/heic' ||
+					imageFile.originalname.toLowerCase().endsWith('.heic')
+				) {
 					try {
-						// Convert HEIC to JPG
 						const jpgBuffer = await heicConvert({
 							buffer: imageBuffer,
 							format: 'JPEG',
-							quality: 0.8 // Compression quality (0.0 - 1.0)
-						});
-			
-						// Upload the converted JPG to S3
+							quality: 0.8,
+						})
+
 						const imageParams = {
 							ACL: 'public-read',
 							Bucket: process.env.AWS_BUCKET_NAME,
 							Body: jpgBuffer,
-							Key: `userImage/${imageFile.originalname.replace('.heic', '.jpg')}`,
-							ContentType: 'image/jpeg'
-						};
-			
-						const imageData = await s3.upload(imageParams).promise();
-						
-						// Clean up the local file
-						fs.unlinkSync(imageFile.path);
-						imageUrl = imageData.Location;
-			
+							Key: `userImage/${imageFile.originalname.replace(/\.heic$/i, '.jpg')}`,
+							ContentType: 'image/jpeg',
+						}
+
+						const imageData = await s3.upload(imageParams).promise()
+
+						fs.unlinkSync(imageFile.path)
+						imageUrl = imageData.Location
 					} catch (error) {
-						console.error('Error converting HEIC to JPG:', error);
-						res.status(500).send('Error converting the file.');
+						console.error('Error converting HEIC to JPG:', error)
+						return res.status(500).send('Error converting the file.')
 					}
 				} else {
-					// Handle non-HEIC files as usual
 					const imageParams = {
 						ACL: 'public-read',
 						Bucket: process.env.AWS_BUCKET_NAME,
 						Body: fs.createReadStream(imageFile.path),
-						Key: `userImage/${imageFile.originalname}`
-					};
-			
-					const imageData = await s3.upload(imageParams).promise();
-					fs.unlinkSync(imageFile.path);
-					imageUrl = imageData.Location;
+						Key: `userImage/${imageFile.originalname}`,
+					}
+
+					const imageData = await s3.upload(imageParams).promise()
+					fs.unlinkSync(imageFile.path)
+					imageUrl = imageData.Location
 				}
 			}
 
 			if (req.files.gpx) {
-				const gpxReadStream = fs.createReadStream(req.files.gpx[0].path, 'utf8')
-				const saxStream = sax.createStream(true)
+				const gpxFile = req.files.gpx[0]
 
-				let points = []
-				saxStream.on('opentag', (node) => {
-					if (node.name === 'trkpt') {
-						const lat = parseFloat(node.attributes.lat)
-						const lon = parseFloat(node.attributes.lon)
-						points.push([lat, lon])
+				const ridePoints = await parseRideGpx(gpxFile.path)
+
+				if (!ridePoints.length) {
+					fs.unlinkSync(gpxFile.path)
+					return res.status(400).json({ error: 'Uploaded GPX contains no track points.' })
+				}
+
+				gpxUrl = polyline.encode(
+					ridePoints.map((point) => [point.lat, point.lon])
+				)
+
+				// Detect if timestamps exist
+				const hasTimestamps = rideHasTimestamps(ridePoints)
+
+				if (hasTimestamps) {
+					const finishResult = detectFinishCrossingTime(ridePoints, FINISH_SEGMENT)
+
+					finishTime = finishResult.finishTime
+					finishDetected = finishResult.finishDetected
+
+					finishMatchMeta = {
+						reason: finishResult.reason,
+						progress: finishResult.progress || null,
+						matchMeta: finishResult.matchMeta || null,
 					}
-				})
+				} else {
+					// Skip finish detection
+					finishDetected = false
+					finishTime = null
 
-				gpxReadStream.pipe(saxStream)
+					finishMatchMeta = {
+						reason: 'GPX contains no timestamp data — finish detection skipped'
+					}
+				}
 
-				await new Promise((resolve, reject) => {
-					gpxReadStream.on('end', resolve)
-					gpxReadStream.on('error', reject)
-				})
-
-				gpxUrl = polyline.encode(points)
+				fs.unlinkSync(gpxFile.path)
 			}
 		}
 
 		let attendeeData = {}
 		if (req.body.attendee) {
 			attendeeData = { ...req.body.attendee }
+
 			if (imageUrl) {
 				attendeeData.image = imageUrl
 			}
+
 			if (gpxUrl) {
 				attendeeData.gpx = gpxUrl
 			}
+
+			attendeeData.finishTime = finishTime
+			attendeeData.finishDetected = finishDetected
+			attendeeData.finishMatchMeta = finishMatchMeta
 		} else {
 			attendeeData = {
 				image: imageUrl,
 				gpx: gpxUrl,
+				finishTime,
+				finishDetected,
+				finishMatchMeta,
 			}
 		}
 
