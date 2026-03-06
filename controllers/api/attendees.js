@@ -22,6 +22,7 @@ const FINISH_SEGMENT = [
 const SEGMENT_ARM_RADIUS_METERS = 25
 const FINISH_LINE_NEAR_RADIUS_METERS = 30
 const MIN_ARMED_MATCHES = 2
+const FINISH_CHECK_START_RATIO = 0.8 // only check finish in last 20% of ride points
 
 function toRad(deg) {
 	return (deg * Math.PI) / 180
@@ -235,12 +236,22 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	const startIdx = Math.max(1, approach.armedAtRidePointIndex)
-	for (let i = Math.max(1, startIdx); i < ridePoints.length; i++) {
+	const lateRideStartIdx = Math.max(
+		1,
+		Math.floor(ridePoints.length * FINISH_CHECK_START_RATIO)
+	)
+
+	const startIdx = Math.max(
+		1,
+		approach.armedAtRidePointIndex,
+		lateRideStartIdx
+	)
+
+	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p1 = ridePoints[i - 1]
 		const p2 = ridePoints[i]
 
-		if (!p1.time || !p2.time) continue
+		if (!p1?.time || !p2?.time) continue
 
 		const d1 = getDistanceMeters(p1.lat, p1.lon, finishPoint[0], finishPoint[1])
 		const d2 = getDistanceMeters(p2.lat, p2.lon, finishPoint[0], finishPoint[1])
@@ -263,7 +274,12 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 				finishTime,
 				finishDetected: !!finishTime,
 				reason: finishTime ? 'Finish line crossed' : 'Could not interpolate finish time',
-				progress: approach,
+				progress: {
+					...approach,
+					lateRideStartIdx,
+					startIdx,
+					finishCheckStartRatio: FINISH_CHECK_START_RATIO,
+				},
 				matchMeta: {
 					crossingBetweenRidePointIndexes: [i - 1, i],
 					crossingRatio: ratio,
@@ -280,7 +296,7 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 
 	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p = ridePoints[i]
-		if (!p.time) continue
+		if (!p?.time) continue
 
 		const d = getDistanceMeters(p.lat, p.lon, finishPoint[0], finishPoint[1])
 		const s = getSignedFinishProgress(p, finishSegment)
@@ -292,7 +308,12 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 				finishTime: new Date(p.time),
 				finishDetected: true,
 				reason: 'Fallback finish detection',
-				progress: approach,
+				progress: {
+					...approach,
+					lateRideStartIdx,
+					startIdx,
+					finishCheckStartRatio: FINISH_CHECK_START_RATIO,
+				},
 				matchMeta: {
 					ridePointIndex: i,
 					pointTime: p.time,
@@ -307,7 +328,12 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		finishTime: null,
 		finishDetected: false,
 		reason: 'Did not cross finish line',
-		progress: approach,
+		progress: {
+			...approach,
+			lateRideStartIdx,
+			startIdx,
+			finishCheckStartRatio: FINISH_CHECK_START_RATIO,
+		},
 		matchMeta: null,
 	}
 }
