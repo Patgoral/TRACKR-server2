@@ -19,11 +19,10 @@ const FINISH_SEGMENT = [
 	[33.228969, -83.52409],
 ]
 
-const SEGMENT_MATCH_RADIUS_METERS = 18
+const SEGMENT_MATCH_RADIUS_METERS = 20
 const FINISH_LINE_NEAR_RADIUS_METERS = 20
-const MIN_ORDERED_MATCHES = 4
-const MIN_DIRECTION_PROGRESS = 3
-const MAX_FIRST_MATCH_INDEX = 3
+const MIN_PROGRESS_ALONG_METERS = 40
+const MIN_PROGRESS_RATIO = 0.7
 
 function toRad(deg) {
 	return (deg * Math.PI) / 180
@@ -46,13 +45,13 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
 	return R * c
 }
 
-function latLonToXY(lat, lon, refLat) {
+function latLonToXY(lat, lon, refLat, refLon) {
 	const metersPerDegLat = 111320
 	const metersPerDegLon = 111320 * Math.cos(toRad(refLat))
 
 	return {
-		x: lon * metersPerDegLon,
-		y: lat * metersPerDegLat,
+		x: (lon - refLon) * metersPerDegLon,
+		y: (lat - refLat) * metersPerDegLat,
 	}
 }
 
@@ -129,94 +128,134 @@ async function parseRideGpx(filePath) {
 	})
 }
 
-function getClosestSegmentIndex(point, segment, radiusMeters = SEGMENT_MATCH_RADIUS_METERS) {
-	let closestIdx = -1
-	let closestDist = Infinity
+function buildSegmentGeometry(segment) {
+	const refLat = segment[0][0]
+	const refLon = segment[0][1]
 
-	for (let i = 0; i < segment.length; i++) {
-		const segPoint = segment[i]
-		const dist = getDistanceMeters(point.lat, point.lon, segPoint[0], segPoint[1])
+	const xyPoints = segment.map(([lat, lon]) => latLonToXY(lat, lon, refLat, refLon))
 
-		if (dist < closestDist) {
-			closestDist = dist
-			closestIdx = i
+	const cumulative = [0]
+	for (let i = 1; i < xyPoints.length; i++) {
+		const dx = xyPoints[i].x - xyPoints[i - 1].x
+		const dy = xyPoints[i].y - xyPoints[i - 1].y
+		cumulative.push(cumulative[i - 1] + Math.sqrt(dx * dx + dy * dy))
+	}
+
+	return {
+		refLat,
+		refLon,
+		xyPoints,
+		cumulative,
+		totalLength: cumulative[cumulative.length - 1],
+	}
+}
+
+function getClosestPointOnSegmentPolyline(point, segmentGeometry) {
+	const p = latLonToXY(point.lat, point.lon, segmentGeometry.refLat, segmentGeometry.refLon)
+
+	let best = {
+		distance: Infinity,
+		progressMeters: 0,
+		segmentIndex: -1,
+		t: 0,
+	}
+
+	for (let i = 0; i < segmentGeometry.xyPoints.length - 1; i++) {
+		const a = segmentGeometry.xyPoints[i]
+		const b = segmentGeometry.xyPoints[i + 1]
+
+		const ab = subtractVec(b, a)
+		const ap = subtractVec(p, a)
+		const abLenSq = dot(ab, ab)
+
+		if (abLenSq === 0) continue
+
+		let t = dot(ap, ab) / abLenSq
+		t = Math.max(0, Math.min(1, t))
+
+		const proj = {
+			x: a.x + ab.x * t,
+			y: a.y + ab.y * t,
+		}
+
+		const dx = p.x - proj.x
+		const dy = p.y - proj.y
+		const dist = Math.sqrt(dx * dx + dy * dy)
+
+		if (dist < best.distance) {
+			const segLen = segmentGeometry.cumulative[i + 1] - segmentGeometry.cumulative[i]
+
+			best = {
+				distance: dist,
+				progressMeters: segmentGeometry.cumulative[i] + segLen * t,
+				segmentIndex: i,
+				t,
+			}
 		}
 	}
 
-	if (closestDist <= radiusMeters) {
-		return { index: closestIdx, distance: closestDist }
-	}
-
-	return { index: -1, distance: closestDist }
+	return best
 }
 
-function analyzeOrderedSegmentProgress(ridePoints, finishSegment) {
+function analyzeSegmentProgress(ridePoints, finishSegment) {
+	const geometry = buildSegmentGeometry(finishSegment)
+
 	let enteredSegmentAtRidePointIndex = -1
 	let enteredSegmentAtTime = null
 
-	let firstMatchedIndex = -1
-	let lastMatchedIndex = -1
-	let maxMatchedIndex = -1
-	let orderedMatches = 0
-	let progressedSteps = 0
+	let firstProgressMeters = null
+	let maxProgressMeters = null
+	let lastProgressMeters = null
+	let matchedPoints = 0
 
 	for (let i = 0; i < ridePoints.length; i++) {
 		const point = ridePoints[i]
-		const match = getClosestSegmentIndex(point, finishSegment)
+		const closest = getClosestPointOnSegmentPolyline(point, geometry)
 
-		if (match.index === -1) continue
+		if (closest.distance > SEGMENT_MATCH_RADIUS_METERS) continue
 
 		if (enteredSegmentAtRidePointIndex === -1) {
 			enteredSegmentAtRidePointIndex = i
 			enteredSegmentAtTime = point.time ? new Date(point.time) : null
-		}
-
-		if (firstMatchedIndex === -1) {
-			firstMatchedIndex = match.index
-			lastMatchedIndex = match.index
-			maxMatchedIndex = match.index
-			orderedMatches = 1
+			firstProgressMeters = closest.progressMeters
+			maxProgressMeters = closest.progressMeters
+			lastProgressMeters = closest.progressMeters
+			matchedPoints = 1
 			continue
 		}
 
-		if (match.index > maxMatchedIndex) {
-			progressedSteps += (match.index - maxMatchedIndex)
-			maxMatchedIndex = match.index
-			orderedMatches++
+		matchedPoints++
+		lastProgressMeters = closest.progressMeters
+		if (closest.progressMeters > maxProgressMeters) {
+			maxProgressMeters = closest.progressMeters
 		}
-
-		lastMatchedIndex = match.index
 	}
 
+	const progressedMeters =
+		firstProgressMeters === null || maxProgressMeters === null
+			? 0
+			: maxProgressMeters - firstProgressMeters
+
 	const validDirection =
-		firstMatchedIndex !== -1 &&
-		firstMatchedIndex <= MAX_FIRST_MATCH_INDEX &&
-		orderedMatches >= MIN_ORDERED_MATCHES &&
-		progressedSteps >= MIN_DIRECTION_PROGRESS &&
-		maxMatchedIndex >= finishSegment.length - 2
+		firstProgressMeters !== null &&
+		firstProgressMeters <= geometry.totalLength * 0.4 &&
+		maxProgressMeters >= geometry.totalLength * MIN_PROGRESS_RATIO &&
+		progressedMeters >= MIN_PROGRESS_ALONG_METERS
 
 	return {
 		validDirection,
-		firstMatchedIndex,
-		lastMatchedIndex,
-		maxMatchedIndex,
-		orderedMatches,
-		progressedSteps,
 		enteredSegmentAtRidePointIndex,
 		enteredSegmentAtTime,
+		firstProgressMeters,
+		lastProgressMeters,
+		maxProgressMeters,
+		progressedMeters,
+		matchedPoints,
+		segmentLengthMeters: geometry.totalLength,
+		geometry,
 	}
 }
 
-/*
-Detect crossing of the finish line.
-Finish line = a line perpendicular to the final road direction, passing through the final point.
-
-We look for the first rider segment after entering the finish area where:
-- previous point is on the "before finish" side
-- next point is on or past the finish side
-
-Then interpolate the timestamp.
-*/
 function detectFinishCrossingTime(ridePoints, finishSegment) {
 	if (!ridePoints || ridePoints.length < 2 || !finishSegment || finishSegment.length < 2) {
 		return {
@@ -226,25 +265,36 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	const progress = analyzeOrderedSegmentProgress(ridePoints, finishSegment)
+	const progress = analyzeSegmentProgress(ridePoints, finishSegment)
 
 	if (!progress.validDirection) {
 		return {
 			finishTime: null,
 			finishDetected: false,
 			reason: 'Segment not completed in correct direction',
-			progress,
+			progress: {
+				validDirection: progress.validDirection,
+				enteredSegmentAtRidePointIndex: progress.enteredSegmentAtRidePointIndex,
+				enteredSegmentAtTime: progress.enteredSegmentAtTime,
+				firstProgressMeters: progress.firstProgressMeters,
+				lastProgressMeters: progress.lastProgressMeters,
+				maxProgressMeters: progress.maxProgressMeters,
+				progressedMeters: progress.progressedMeters,
+				matchedPoints: progress.matchedPoints,
+				segmentLengthMeters: progress.segmentLengthMeters,
+			},
+			matchMeta: null,
 		}
 	}
 
 	const finishPoint = finishSegment[finishSegment.length - 1]
 	const prevFinishPoint = finishSegment[finishSegment.length - 2]
 	const refLat = finishPoint[0]
+	const refLon = finishPoint[1]
 
-	const finishXY = latLonToXY(finishPoint[0], finishPoint[1], refLat)
-	const prevFinishXY = latLonToXY(prevFinishPoint[0], prevFinishPoint[1], refLat)
+	const finishXY = latLonToXY(finishPoint[0], finishPoint[1], refLat, refLon)
+	const prevFinishXY = latLonToXY(prevFinishPoint[0], prevFinishPoint[1], refLat, refLon)
 
-	// Direction of road near finish
 	const roadVec = subtractVec(finishXY, prevFinishXY)
 	const roadLen = magnitude(roadVec)
 
@@ -254,11 +304,12 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 			finishDetected: false,
 			reason: 'Invalid finish segment geometry',
 			progress,
+			matchMeta: null,
 		}
 	}
 
 	function signedFinishProgress(lat, lon) {
-		const p = latLonToXY(lat, lon, refLat)
+		const p = latLonToXY(lat, lon, refLat, refLon)
 		const rel = subtractVec(p, finishXY)
 		return dot(rel, roadVec) / roadLen
 	}
@@ -293,7 +344,17 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 				finishTime,
 				finishDetected: !!finishTime,
 				reason: finishTime ? 'Finish line crossed' : 'Could not interpolate finish time',
-				progress,
+				progress: {
+					validDirection: progress.validDirection,
+					enteredSegmentAtRidePointIndex: progress.enteredSegmentAtRidePointIndex,
+					enteredSegmentAtTime: progress.enteredSegmentAtTime,
+					firstProgressMeters: progress.firstProgressMeters,
+					lastProgressMeters: progress.lastProgressMeters,
+					maxProgressMeters: progress.maxProgressMeters,
+					progressedMeters: progress.progressedMeters,
+					matchedPoints: progress.matchedPoints,
+					segmentLengthMeters: progress.segmentLengthMeters,
+				},
 				matchMeta: {
 					crossingBetweenRidePointIndexes: [i - 1, i],
 					crossingRatio: ratio,
@@ -308,7 +369,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	// Fallback: first point at or beyond finish if exact crossing was not found
 	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p = ridePoints[i]
 		if (!p.time) continue
@@ -321,7 +381,17 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 				finishTime: new Date(p.time),
 				finishDetected: true,
 				reason: 'Fallback finish detection',
-				progress,
+				progress: {
+					validDirection: progress.validDirection,
+					enteredSegmentAtRidePointIndex: progress.enteredSegmentAtRidePointIndex,
+					enteredSegmentAtTime: progress.enteredSegmentAtTime,
+					firstProgressMeters: progress.firstProgressMeters,
+					lastProgressMeters: progress.lastProgressMeters,
+					maxProgressMeters: progress.maxProgressMeters,
+					progressedMeters: progress.progressedMeters,
+					matchedPoints: progress.matchedPoints,
+					segmentLengthMeters: progress.segmentLengthMeters,
+				},
 				matchMeta: {
 					ridePointIndex: i,
 					pointTime: p.time,
@@ -336,7 +406,18 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		finishTime: null,
 		finishDetected: false,
 		reason: 'Did not cross finish line',
-		progress,
+		progress: {
+			validDirection: progress.validDirection,
+			enteredSegmentAtRidePointIndex: progress.enteredSegmentAtRidePointIndex,
+			enteredSegmentAtTime: progress.enteredSegmentAtTime,
+			firstProgressMeters: progress.firstProgressMeters,
+			lastProgressMeters: progress.lastProgressMeters,
+			maxProgressMeters: progress.maxProgressMeters,
+			progressedMeters: progress.progressedMeters,
+			matchedPoints: progress.matchedPoints,
+			segmentLengthMeters: progress.segmentLengthMeters,
+		},
+		matchMeta: null,
 	}
 }
 
