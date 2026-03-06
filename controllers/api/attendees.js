@@ -8,7 +8,7 @@ const heicConvert = require('heic-convert')
 
 // Your finish segment, in the correct travel direction
 const FINISH_SEGMENT = [
-	[33.22871,  -83.52579],
+	[33.22871, -83.52579],
 	[33.228742, -83.52557],
 	[33.228777, -83.52534],
 	[33.228814, -83.52509],
@@ -16,15 +16,14 @@ const FINISH_SEGMENT = [
 	[33.228894, -83.52458],
 	[33.228934, -83.52436],
 	[33.228955, -83.52420],
-	[33.228969, -83.52409]
+	[33.228969, -83.52409],
 ]
 
-
-
-const SEGMENT_MATCH_RADIUS_METERS = 30
-const FINISH_LINE_NEAR_RADIUS_METERS = 35
+const SEGMENT_MATCH_RADIUS_METERS = 18
+const FINISH_LINE_NEAR_RADIUS_METERS = 20
 const MIN_ORDERED_MATCHES = 4
 const MIN_DIRECTION_PROGRESS = 3
+const MAX_FIRST_MATCH_INDEX = 3
 
 function toRad(deg) {
 	return (deg * Math.PI) / 180
@@ -63,10 +62,6 @@ function subtractVec(a, b) {
 
 function dot(a, b) {
 	return a.x * b.x + a.y * b.y
-}
-
-function cross(a, b) {
-	return a.x * b.y - a.y * b.x
 }
 
 function magnitude(a) {
@@ -156,11 +151,14 @@ function getClosestSegmentIndex(point, segment, radiusMeters = SEGMENT_MATCH_RAD
 }
 
 function analyzeOrderedSegmentProgress(ridePoints, finishSegment) {
-	let lastMatchedIndex = -1
-	let orderedMatches = 0
-	let progressedSteps = 0
 	let enteredSegmentAtRidePointIndex = -1
 	let enteredSegmentAtTime = null
+
+	let firstMatchedIndex = -1
+	let lastMatchedIndex = -1
+	let maxMatchedIndex = -1
+	let orderedMatches = 0
+	let progressedSteps = 0
 
 	for (let i = 0; i < ridePoints.length; i++) {
 		const point = ridePoints[i]
@@ -173,46 +171,37 @@ function analyzeOrderedSegmentProgress(ridePoints, finishSegment) {
 			enteredSegmentAtTime = point.time ? new Date(point.time) : null
 		}
 
-		if (lastMatchedIndex === -1) {
+		if (firstMatchedIndex === -1) {
+			firstMatchedIndex = match.index
 			lastMatchedIndex = match.index
+			maxMatchedIndex = match.index
+			orderedMatches = 1
+			continue
+		}
+
+		if (match.index > maxMatchedIndex) {
+			progressedSteps += (match.index - maxMatchedIndex)
+			maxMatchedIndex = match.index
 			orderedMatches++
-			continue
 		}
 
-		// Same index or next indices are acceptable.
-		if (match.index === lastMatchedIndex) {
-			continue
-		}
-
-		// Forward movement through the segment
-		if (match.index > lastMatchedIndex) {
-			progressedSteps += (match.index - lastMatchedIndex)
-			orderedMatches++
-			lastMatchedIndex = match.index
-			continue
-		}
-
-		// Big backwards jump suggests wrong direction / turn-around
-		if (match.index < lastMatchedIndex - 1) {
-			return {
-				validDirection: false,
-				orderedMatches,
-				progressedSteps,
-				lastMatchedIndex,
-				enteredSegmentAtRidePointIndex,
-				enteredSegmentAtTime,
-			}
-		}
+		lastMatchedIndex = match.index
 	}
 
+	const validDirection =
+		firstMatchedIndex !== -1 &&
+		firstMatchedIndex <= MAX_FIRST_MATCH_INDEX &&
+		orderedMatches >= MIN_ORDERED_MATCHES &&
+		progressedSteps >= MIN_DIRECTION_PROGRESS &&
+		maxMatchedIndex >= finishSegment.length - 2
+
 	return {
-		validDirection:
-			orderedMatches >= MIN_ORDERED_MATCHES &&
-			progressedSteps >= MIN_DIRECTION_PROGRESS &&
-			lastMatchedIndex >= finishSegment.length - 2,
+		validDirection,
+		firstMatchedIndex,
+		lastMatchedIndex,
+		maxMatchedIndex,
 		orderedMatches,
 		progressedSteps,
-		lastMatchedIndex,
 		enteredSegmentAtRidePointIndex,
 		enteredSegmentAtTime,
 	}
@@ -220,7 +209,7 @@ function analyzeOrderedSegmentProgress(ridePoints, finishSegment) {
 
 /*
 Detect crossing of the finish line.
-Finish line = a line perpendicular to the final segment, passing through the final point.
+Finish line = a line perpendicular to the final road direction, passing through the final point.
 
 We look for the first rider segment after entering the finish area where:
 - previous point is on the "before finish" side
@@ -268,16 +257,16 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		}
 	}
 
-	// A normal vector to the finish line. Crossing this means passing the finish line.
-	// We use roadVec itself to determine before/after relative to finish point.
 	function signedFinishProgress(lat, lon) {
 		const p = latLonToXY(lat, lon, refLat)
 		const rel = subtractVec(p, finishXY)
 		return dot(rel, roadVec) / roadLen
 	}
 
-	// Start checking from slightly before segment entry if possible
-	const startIdx = Math.max(1, progress.enteredSegmentAtRidePointIndex - 2)
+	const startIdx =
+		progress.enteredSegmentAtRidePointIndex > 0
+			? Math.max(1, progress.enteredSegmentAtRidePointIndex - 2)
+			: 1
 
 	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p1 = ridePoints[i - 1]
@@ -288,7 +277,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		const d1 = getDistanceMeters(p1.lat, p1.lon, finishPoint[0], finishPoint[1])
 		const d2 = getDistanceMeters(p2.lat, p2.lon, finishPoint[0], finishPoint[1])
 
-		// Keep it local to finish area so random route crossings elsewhere do not count
 		if (d1 > FINISH_LINE_NEAR_RADIUS_METERS && d2 > FINISH_LINE_NEAR_RADIUS_METERS) {
 			continue
 		}
@@ -296,7 +284,6 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 		const s1 = signedFinishProgress(p1.lat, p1.lon)
 		const s2 = signedFinishProgress(p2.lat, p2.lon)
 
-		// Before finish -> after finish
 		if (s1 < 0 && s2 >= 0) {
 			const denom = s2 - s1
 			const ratio = denom === 0 ? 1 : (-s1 / denom)
@@ -314,12 +301,14 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 					p2Time: p2.time,
 					p1DistanceToFinishMeters: d1,
 					p2DistanceToFinishMeters: d2,
+					s1,
+					s2,
 				},
 			}
 		}
 	}
 
-	// Fallback: first point at or beyond finish if crossing line was not found
+	// Fallback: first point at or beyond finish if exact crossing was not found
 	for (let i = startIdx; i < ridePoints.length; i++) {
 		const p = ridePoints[i]
 		if (!p.time) continue
@@ -337,6 +326,7 @@ function detectFinishCrossingTime(ridePoints, finishSegment) {
 					ridePointIndex: i,
 					pointTime: p.time,
 					distanceToFinishMeters: d,
+					signedProgress: s,
 				},
 			}
 		}
@@ -360,7 +350,6 @@ function rideHasTimestamps(ridePoints) {
 	return false
 }
 
-
 // INDEX ALL ATTENDEES
 async function index(req, res) {
   try {
@@ -369,24 +358,23 @@ async function index(req, res) {
     const filter = {}
 
     if (year) {
-      const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`)
-      const endOfYear = new Date(`${parseInt(year, 10) + 1}-01-01T00:00:00.000Z`)
+      const parsedYear = parseInt(year, 10)
 
-      filter.$or = [
-        { finishTime: { $gte: startOfYear, $lt: endOfYear } },
-        { date: { $gte: startOfYear, $lt: endOfYear } }
-      ]
+      if (!Number.isNaN(parsedYear)) {
+        const startOfYear = new Date(Date.UTC(parsedYear, 0, 1, 0, 0, 0, 0))
+        const endOfYear = new Date(Date.UTC(parsedYear + 1, 0, 1, 0, 0, 0, 0))
+
+        filter.createdAt = {
+          $gte: startOfYear,
+          $lt: endOfYear,
+        }
+      }
     }
 
     const attendees = await Attendee.find(filter)
       .select('-gpx')
+      .sort({ createdAt: 1 })
       .lean()
-
-    attendees.sort((a, b) => {
-      const aTime = new Date(a.finishTime ?? a.date ?? 0).getTime()
-      const bTime = new Date(b.finishTime ?? b.date ?? 0).getTime()
-      return aTime - bTime
-    })
 
     res.status(200).json({ attendees })
   } catch (error) {
