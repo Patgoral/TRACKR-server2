@@ -162,7 +162,12 @@ function analyzeFinishApproach(ridePoints, finishSegment) {
 
 	const armPoints = finishSegment.slice(0, Math.max(2, finishSegment.length - 2))
 
-	for (let i = 0; i < ridePoints.length; i++) {
+	const armSearchStartIdx = Math.max(
+		0,
+		Math.floor(ridePoints.length * FINISH_CHECK_START_RATIO)
+	)
+
+	for (let i = armSearchStartIdx; i < ridePoints.length; i++) {
 		const point = ridePoints[i]
 
 		let nearArmZone = false
@@ -347,6 +352,8 @@ function rideHasTimestamps(ridePoints) {
 
 	return false
 }
+
+
 // INDEX ALL ATTENDEES
 async function index(req, res) {
   try {
